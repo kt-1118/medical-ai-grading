@@ -5,6 +5,7 @@ import os
 import io
 import hmac
 import hashlib
+import re
 from datetime import datetime, timezone, timedelta
 import numpy as np
 import pandas as pd
@@ -15,16 +16,38 @@ from sklearn.metrics import (roc_auc_score, accuracy_score, recall_score,
 
 from ranking import RankingStore, ranking_rows
 
-PASS_AUC = 0.74
+DEFAULT_ASSIGNMENT = 'nhanes_hba1c_2026'
+try:
+    assignment = dict(st.secrets.get('assignment', {}))
+except FileNotFoundError:
+    assignment = {}
+try:
+    ASSIGNMENT_ID = assignment.get('id', DEFAULT_ASSIGNMENT)
+    ASSIGNMENT_TITLE = assignment.get('title', 'NHANES 医療AI演習')
+    PASS_AUC = float(assignment.get('pass_auc', 0.74))
+    CHALLENGE_AUC = assignment.get('challenge_auc', 0.79 if ASSIGNMENT_ID == DEFAULT_ASSIGNMENT else None)
+    if CHALLENGE_AUC is not None:
+        CHALLENGE_AUC = float(CHALLENGE_AUC)
+    if (not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,47}', ASSIGNMENT_ID)
+            or not isinstance(ASSIGNMENT_TITLE, str) or not ASSIGNMENT_TITLE.strip()
+            or not np.isfinite(PASS_AUC) or not 0 <= PASS_AUC <= 1
+            or (CHALLENGE_AUC is not None and (not np.isfinite(CHALLENGE_AUC) or not PASS_AUC <= CHALLENGE_AUC <= 1))):
+        raise ValueError()
+except (TypeError, ValueError):
+    st.error('課題の設定を確認してください。')
+    st.stop()
 ANSWER_FILE = Path(os.environ.get('NHANES_ANSWER_FILE', str(Path(__file__).with_name('public_test_answer.csv'))))
 
-st.set_page_config(page_title='医療AI演習・提出CSVの採点', layout='centered')
-st.title('医療AI演習・提出CSVの採点')
+PAGE_TITLE = '医療AI演習・提出CSVの採点' if ASSIGNMENT_ID == DEFAULT_ASSIGNMENT else f'{ASSIGNMENT_TITLE}・提出CSVの採点'
+st.set_page_config(page_title=PAGE_TITLE, layout='centered')
+st.title(PAGE_TITLE)
 st.write('submission.csvを選ぶと、自動で点数と合否が表示されます。結果をダウンロードしてLMSへ提出してください。')
-st.caption(f'合格：ROC-AUC {PASS_AUC:.2f}以上。提出の時間・期間・回数に制限はありません。')
+st.caption(f'合格：ROC-AUC {PASS_AUC:g}以上。提出の時間・期間・回数に制限はありません。')
 
 try:
-    if ANSWER_FILE.exists():
+    if ASSIGNMENT_ID != DEFAULT_ASSIGNMENT:
+        answer = pd.read_csv(io.StringIO(st.secrets['answers'][ASSIGNMENT_ID]), dtype={'participant_id': str})
+    elif ANSWER_FILE.exists():
         answer = pd.read_csv(ANSWER_FILE, dtype={'participant_id': str})
     else:
         answer = pd.read_csv(io.StringIO(st.secrets['answer_csv']), dtype={'participant_id': str})
@@ -46,9 +69,9 @@ def read_submission(content):
     except (UnicodeError, csv.Error):
         raise ValueError('UTF-8のCSVを選んでください。区切り文字や引用符も確認してください。') from None
     if not rows or rows[0] != ['student_id', 'participant_id', 'probability']:
-        raise ValueError('列はstudent_id,participant_id,probabilityの3列にしてください。最新版のNotebookのSTEP9で作成できます。')
+        raise ValueError('列はstudent_id,participant_id,probabilityの3列にしてください。')
     if any(len(row) != 3 for row in rows[1:]):
-        raise ValueError('各行を学籍番号・対象ID・確率の3項目にしてください。空行も削除してください。')
+        raise ValueError('各行を学籍番号・対象ID・予測値の3項目にしてください。空行も削除してください。')
     submitted = pd.DataFrame(rows[1:], columns=rows[0])
     if len(submitted) != len(answer):
         raise ValueError(f'行数は{len(answer)}行にしてください。')
@@ -67,6 +90,7 @@ def read_submission(content):
     return student_ids.iloc[0], submitted.set_index('participant_id').loc[answer.participant_id, 'probability']
 
 
+
 def ranking_settings():
     try:
         settings = dict(st.secrets.get('leaderboard', {}))
@@ -82,8 +106,8 @@ def student_key(student_id, secret):
 
 
 @st.cache_resource
-def ranking_store(url, api_token):
-    return RankingStore(url, api_token)
+def ranking_store(url, api_token, assignment_id):
+    return RankingStore(url, api_token, assignment_id=assignment_id)
 
 
 def public_ranking(rows):
@@ -131,7 +155,7 @@ auc = None
 store = None
 if settings:
     try:
-        store = ranking_store(settings['url'], settings['api_token'])
+        store = ranking_store(settings['url'], settings['api_token'], ASSIGNMENT_ID)
     except Exception:
         st.warning('ランキングの準備ができていません。採点は利用できます。')
 if uploaded is not None:
@@ -149,8 +173,9 @@ if uploaded is not None:
     st.metric('ROC-AUC', f'{auc:.4f}')
     if settings:
         try:
-            own_key = student_key(student_id, settings['identity_secret'])
-            fingerprint = hashlib.sha256(uploaded.getvalue()).hexdigest()
+            key_id = student_id if ASSIGNMENT_ID == DEFAULT_ASSIGNMENT else f'{ASSIGNMENT_ID}:{student_id}'
+            own_key = student_key(key_id, settings['identity_secret'])
+            fingerprint = hashlib.sha256(ASSIGNMENT_ID.encode() + b'\0' + uploaded.getvalue()).hexdigest()
             if store is not None and st.session_state.get('_ranking_file') != fingerprint:
                 st.session_state['_ranking_ticket'] = store.submit(own_key, float(auc))
                 st.session_state['_ranking_file'] = fingerprint
@@ -160,10 +185,11 @@ if uploaded is not None:
         st.success('合格：合格ラインをクリアしました。')
     else:
         st.warning('再挑戦：validationでモデルや設定を見直してみましょう。')
-    if auc >= 0.79:
-        st.success('挑戦目標（0.79）も達成しました。')
+    if CHALLENGE_AUC is not None and auc >= CHALLENGE_AUC:
+        st.success(f'挑戦目標（{CHALLENGE_AUC:g}）も達成しました。')
     result = pd.DataFrame([{
-        '課題': 'NHANES 医療AI演習',
+        '課題': ASSIGNMENT_TITLE,
+        '課題ID': ASSIGNMENT_ID,
         '学籍番号': student_id,
         '採点日時（日本時間）': datetime.now(timezone(timedelta(hours=9))).isoformat(timespec='seconds'),
         'ROC-AUC': auc,

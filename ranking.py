@@ -10,12 +10,15 @@ from urllib.request import Request, urlopen
 
 
 class RankingStore:
-    def __init__(self, url, api_token, batch_delay=1.0):
+    def __init__(self, url, api_token, batch_delay=1.0, assignment_id='nhanes_hba1c_2026'):
         parsed = urlparse(url)
         if parsed.scheme != 'https' or parsed.netloc != 'script.google.com' or not re.fullmatch(r'/macros/s/[A-Za-z0-9_-]+/exec', parsed.path):
             raise ValueError('ランキングの接続先を確認してください。')
         if len(api_token) < 32:
             raise ValueError('ランキングの接続設定を確認してください。')
+        if not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,47}', assignment_id):
+            raise ValueError('課題IDの設定を確認してください。')
+        self.assignment_id = assignment_id
         self.url, self.api_token = url, api_token
         self.batch_delay = batch_delay
         self.lock = threading.Lock()
@@ -27,7 +30,8 @@ class RankingStore:
         self.fetched_at = 0
 
     def _request(self, action, entries=None):
-        payload = {'token': self.api_token, 'action': action, 'entries': entries or []}
+        payload = {'token': self.api_token, 'action': action, 'entries': entries or [],
+                   'assignment_id': self.assignment_id}
         request = Request(self.url, data=json.dumps(payload).encode(),
                           headers={'Content-Type': 'application/json'}, method='POST')
         with urlopen(request, timeout=30) as response:
