@@ -30,7 +30,7 @@ class RankingStore:
         payload = {'token': self.api_token, 'action': action, 'entries': entries or []}
         request = Request(self.url, data=json.dumps(payload).encode(),
                           headers={'Content-Type': 'application/json'}, method='POST')
-        with urlopen(request, timeout=15) as response:
+        with urlopen(request, timeout=30) as response:
             result = json.loads(response.read())
         if not result.get('ok'):
             raise ValueError('ランキングとの通信に失敗しました。')

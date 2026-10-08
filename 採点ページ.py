@@ -98,8 +98,10 @@ def show_ranking(store, own_key, auc=None):
     st.caption('1人につき最高スコアを掲載します。同点は同順位です。更新は約30秒ごとです。成績はLMSへの提出後に確定します。')
     st.button('ランキングを更新')
     try:
+        scores = store.snapshot()
+        saved = own_key is not None and auc is not None and dict(scores).get(own_key, -1) >= auc
         ticket = st.session_state.get('_ranking_ticket')
-        if own_key and ticket is not None:
+        if own_key and ticket is not None and not saved:
             if not ticket.done():
                 st.info('ランキングへ登録中です。反映まで少しお待ちください。')
             elif ticket.exception() is not None:
@@ -107,14 +109,14 @@ def show_ranking(store, own_key, auc=None):
                 if st.button('ランキング登録を再試行'):
                     st.session_state['_ranking_ticket'] = store.submit(own_key, auc)
                     st.rerun(scope='fragment')
-        rows = ranking_rows(store.snapshot(), own_key)
+        rows = ranking_rows(scores, own_key)
         if not rows:
             st.info('まだ登録されたスコアがありません。')
             return
         own = next((row for row in rows if row['is_self']), None)
         if own:
             st.write(f"あなたは現在 **{own['position']}位 / {own['participants']}人** です。最高ROC-AUC：**{own['auc']:.6f}**")
-        else:
+        elif not own_key:
             st.caption('自分の順位はsubmission.csvをアップロードすると表示されます。')
         st.dataframe(public_ranking(rows), hide_index=True,
                      column_config={'ROC-AUC': st.column_config.NumberColumn(format='%.6f')})
