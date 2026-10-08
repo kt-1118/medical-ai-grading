@@ -1,0 +1,11 @@
+[server]
+maxUploadSize = 1
+enableXsrfProtection = true
+enableCORS = true
+enableStaticServing = false
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = "none"
