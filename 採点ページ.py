@@ -112,6 +112,3 @@ if uploaded is not None:
         ax.legend()
         st.pyplot(fig)
         plt.close(fig)
-
-st.info('Accuracyが高いモデルが必ずしも医療スクリーニングに適しているとは限りません')
-st.caption('HbA1c ≥ 6.5%の対象者を予測する授業用課題です。糖尿病の確定診断ではありません。CSVは採点のためにサーバーへ送信され、永続保存しません。')
