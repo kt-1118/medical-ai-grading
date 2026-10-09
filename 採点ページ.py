@@ -17,10 +17,27 @@ from sklearn.metrics import (roc_auc_score, accuracy_score, recall_score,
 from ranking import RankingStore, ranking_rows
 
 DEFAULT_ASSIGNMENT = 'nhanes_hba1c_2026'
+COURSES = {
+    'nhanes_logistic_2026': {'title': 'ロジスティック回帰コンペ', 'pass_auc': 0.74, 'challenge_auc': 0.79,
+                            'label': '01 回帰・ロジスティック回帰'},
+    DEFAULT_ASSIGNMENT: {'title': 'NHANES 医療AI演習', 'pass_auc': 0.74, 'challenge_auc': 0.79,
+                         'label': '02 機械学習（SVM・決定木・ランダムフォレスト）'},
+    'breast_dl_2026': {'title': '医療画像・深層学習コンペ', 'pass_auc': 0.80, 'challenge_auc': 0.85,
+                         'label': '03 深層学習（医療画像）'},
+}
+st.set_page_config(page_title='コンペ・提出CSVの採点', layout='centered')
 try:
     assignment = dict(st.secrets.get('assignment', {}))
 except FileNotFoundError:
     assignment = {}
+if not assignment:
+    course_ids = list(COURSES)
+    requested = st.query_params.get('course', DEFAULT_ASSIGNMENT)
+    selected = st.selectbox('コンペを選択', course_ids,
+        index=course_ids.index(requested) if requested in COURSES else course_ids.index(DEFAULT_ASSIGNMENT),
+        format_func=lambda value: COURSES[value]['label'])
+    st.query_params['course'] = selected
+    assignment = dict(COURSES[selected], id=selected)
 try:
     ASSIGNMENT_ID = assignment.get('id', DEFAULT_ASSIGNMENT)
     ASSIGNMENT_TITLE = assignment.get('title', 'NHANES 医療AI演習')
@@ -39,14 +56,17 @@ except (TypeError, ValueError):
 ANSWER_FILE = Path(os.environ.get('NHANES_ANSWER_FILE', str(Path(__file__).with_name('public_test_answer.csv'))))
 
 PAGE_TITLE = '医療AI演習・提出CSVの採点' if ASSIGNMENT_ID == DEFAULT_ASSIGNMENT else f'{ASSIGNMENT_TITLE}・提出CSVの採点'
-st.set_page_config(page_title=PAGE_TITLE, layout='centered')
 st.title(PAGE_TITLE)
 st.write('submission.csvを選ぶと、自動で点数と合否が表示されます。結果をダウンロードしてLMSへ提出してください。')
 st.caption(f'合格：ROC-AUC {PASS_AUC:g}以上。提出の時間・期間・回数に制限はありません。')
 
 try:
     if ASSIGNMENT_ID != DEFAULT_ASSIGNMENT:
-        answer = pd.read_csv(io.StringIO(st.secrets['answers'][ASSIGNMENT_ID]), dtype={'participant_id': str})
+        local_answers = os.environ.get('NHANES_ANSWERS_DIR')
+        if local_answers:
+            answer = pd.read_csv(Path(local_answers) / f'{ASSIGNMENT_ID}.csv', dtype={'participant_id': str})
+        else:
+            answer = pd.read_csv(io.StringIO(st.secrets['answers'][ASSIGNMENT_ID]), dtype={'participant_id': str})
     elif ANSWER_FILE.exists():
         answer = pd.read_csv(ANSWER_FILE, dtype={'participant_id': str})
     else:
@@ -148,7 +168,7 @@ def show_ranking(store, own_key, auc=None):
         st.warning('ランキングを読み込めませんでした。少し待って更新してください。')
 
 
-uploaded = st.file_uploader('submission.csvをアップロード', type=['csv'], max_upload_size=1)
+uploaded = st.file_uploader('submission.csvをアップロード', type=['csv'], max_upload_size=1, key=f'csv_{ASSIGNMENT_ID}')
 settings = ranking_settings()
 own_key = None
 auc = None
