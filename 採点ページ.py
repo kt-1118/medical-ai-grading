@@ -18,14 +18,14 @@ from ranking import RankingStore, ranking_rows
 
 DEFAULT_ASSIGNMENT = 'nhanes_hba1c_2026'
 COURSES = {
-    'nhanes_logistic_2026': {'title': 'ロジスティック回帰コンペ', 'pass_auc': 0.74, 'challenge_auc': 0.79,
+    'nhanes_logistic_2026': {'title': 'ロジスティック回帰演習', 'pass_auc': 0.74, 'challenge_auc': 0.79,
                             'label': '01 回帰・ロジスティック回帰'},
     DEFAULT_ASSIGNMENT: {'title': 'NHANES 医療AI演習', 'pass_auc': 0.74, 'challenge_auc': 0.79,
                          'label': '02 機械学習（SVM・決定木・ランダムフォレスト）'},
-    'blood_dl_2026': {'title': '医療画像・深層学習コンペ', 'pass_auc': 0.90, 'challenge_auc': 0.95,
+    'blood_dl_2026': {'title': '医療画像・深層学習演習', 'pass_auc': 0.90, 'challenge_auc': 0.95,
                          'label': '03 深層学習（血球画像）'},
 }
-st.set_page_config(page_title='コンペ・提出CSVの採点', layout='centered')
+st.set_page_config(page_title='演習・提出CSVの採点', layout='centered')
 try:
     assignment = dict(st.secrets.get('assignment', {}))
 except FileNotFoundError:
@@ -33,7 +33,7 @@ except FileNotFoundError:
 if not assignment:
     course_ids = list(COURSES)
     requested = st.query_params.get('course', DEFAULT_ASSIGNMENT)
-    selected = st.selectbox('コンペを選択', course_ids,
+    selected = st.selectbox('演習を選択', course_ids,
         index=course_ids.index(requested) if requested in COURSES else course_ids.index(DEFAULT_ASSIGNMENT),
         format_func=lambda value: COURSES[value]['label'])
     st.query_params['course'] = selected
