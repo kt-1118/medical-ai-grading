@@ -22,8 +22,8 @@ COURSES = {
                             'label': '01 回帰・ロジスティック回帰'},
     DEFAULT_ASSIGNMENT: {'title': 'NHANES 医療AI演習', 'pass_auc': 0.74, 'challenge_auc': 0.79,
                          'label': '02 機械学習（SVM・決定木・ランダムフォレスト）'},
-    'breast_dl_2026': {'title': '医療画像・深層学習コンペ', 'pass_auc': 0.80, 'challenge_auc': 0.85,
-                         'label': '03 深層学習（医療画像）'},
+    'blood_dl_2026': {'title': '医療画像・深層学習コンペ', 'pass_auc': 0.90, 'challenge_auc': 0.95,
+                         'label': '03 深層学習（血球画像）'},
 }
 st.set_page_config(page_title='コンペ・提出CSVの採点', layout='centered')
 try:
