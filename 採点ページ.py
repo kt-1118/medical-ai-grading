@@ -17,7 +17,7 @@ from ranking import RankingStore
 
 DEFAULT_ASSIGNMENT = 'nhanes_hba1c_2026'
 COURSES = {
-    'nhanes_logistic_2026': {'title': 'ロジスティック回帰演習', 'pass_auc': 0.74, 'challenge_auc': 0.79,
+    'nhanes_logistic_2026': {'title': 'ロジスティック回帰演習', 'pass_auc': 0.77, 'challenge_auc': 0.79,
                             'label': '01 回帰・ロジスティック回帰'},
     DEFAULT_ASSIGNMENT: {'title': 'NHANES 医療AI演習', 'pass_auc': 0.74, 'challenge_auc': 0.79,
                          'label': '02 機械学習（SVM・決定木・ランダムフォレスト）'},
