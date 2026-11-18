@@ -13,7 +13,7 @@ import streamlit as st
 from sklearn.metrics import (roc_auc_score, accuracy_score, recall_score,
     precision_score, f1_score, confusion_matrix, roc_curve)
 
-from ranking import RankingStore, top_scores
+from ranking import RankingStore
 
 DEFAULT_ASSIGNMENT = 'nhanes_hba1c_2026'
 COURSES = {
@@ -141,7 +141,7 @@ def show_ranking(store, upload_key, auc=None):
                 if st.button('ランキング登録を再試行'):
                     st.session_state['_ranking_ticket'] = store.submit(upload_key, auc)
                     st.rerun(scope='fragment')
-        values = top_scores(scores)
+        values = sorted((value for _, value in scores), reverse=True)[:20]
         if not values:
             st.info('まだ登録されたスコアがありません。')
             return

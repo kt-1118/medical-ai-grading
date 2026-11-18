@@ -94,8 +94,3 @@ class RankingStore:
                 self._cache(self._request('ranking'))
             with self.lock:
                 return [row[:] for row in self.rows]
-
-
-def top_scores(scores):
-    """異なる提出の同点を残し、公開するROC-AUCを最大20件に絞る。"""
-    return sorted((auc for _, auc in scores), reverse=True)[:20]
