@@ -88,8 +88,10 @@ try:
         raise ValueError()
     if not answer.participant_id.is_unique or set(answer.target.unique()) != {0, 1}:
         raise ValueError()
-except Exception:
-    st.error('採点の準備ができていません。教員に連絡してください。')
+except Exception as error:
+    error_type = type(error).__name__
+    code = getattr(error, 'code', '')
+    st.error(f'採点データを読み込めませんでした。再読み込みしても続く場合は、教員に確認コード（{error_type} {code}）を連絡してください。')
     st.stop()
 
 
