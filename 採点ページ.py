@@ -3,7 +3,6 @@ from pathlib import Path
 import csv
 import os
 import io
-import hmac
 import hashlib
 import re
 from datetime import datetime, timezone, timedelta
@@ -14,7 +13,7 @@ import streamlit as st
 from sklearn.metrics import (roc_auc_score, accuracy_score, recall_score,
     precision_score, f1_score, confusion_matrix, roc_curve)
 
-from ranking import RankingStore, ranking_rows
+from ranking import RankingStore, top_scores
 
 DEFAULT_ASSIGNMENT = 'nhanes_hba1c_2026'
 COURSES = {
@@ -88,16 +87,15 @@ def read_submission(content):
         rows = list(csv.reader(io.StringIO(text), strict=True))
     except (UnicodeError, csv.Error):
         raise ValueError('UTF-8のCSVを選んでください。区切り文字や引用符も確認してください。') from None
-    if not rows or rows[0] != ['student_id', 'participant_id', 'probability']:
-        raise ValueError('列はstudent_id,participant_id,probabilityの3列にしてください。')
-    if any(len(row) != 3 for row in rows[1:]):
-        raise ValueError('各行を学籍番号・対象ID・予測値の3項目にしてください。空行も削除してください。')
+    if rows and 'student_id' in rows[0]:
+        raise ValueError('旧形式のCSVです。最新版の配布ノートのSTEP9で学籍番号を含まないCSVを作成してください。')
+    if not rows or rows[0] != ['participant_id', 'probability']:
+        raise ValueError('列はparticipant_id,probabilityの2列にしてください。')
+    if any(len(row) != 2 for row in rows[1:]):
+        raise ValueError('各行を対象ID・予測値の2項目にしてください。空行も削除してください。')
     submitted = pd.DataFrame(rows[1:], columns=rows[0])
     if len(submitted) != len(answer):
         raise ValueError(f'行数は{len(answer)}行にしてください。')
-    student_ids = submitted.student_id.str.strip().str.upper()
-    if not student_ids.str.fullmatch(r'[A-Z0-9][A-Z0-9-]{0,31}').all() or student_ids.nunique() != 1:
-        raise ValueError('student_idは全行に同じ学籍番号を入れてください。半角英数字・ハイフンの32文字以内です。')
     if submitted.participant_id.duplicated().any():
         raise ValueError('IDが重複しています。1人につき1行にしてください。')
     if set(submitted.participant_id) != set(answer.participant_id):
@@ -107,7 +105,7 @@ def read_submission(content):
         raise ValueError('probabilityに欠損・文字・無限大があります。')
     if not submitted.probability.between(0, 1).all():
         raise ValueError('probabilityを0〜1の数値にしてください。')
-    return student_ids.iloc[0], submitted.set_index('participant_id').loc[answer.participant_id, 'probability']
+    return submitted.set_index('participant_id').loc[answer.participant_id, 'probability']
 
 
 
@@ -119,58 +117,44 @@ def ranking_settings():
     return settings
 
 
-def student_key(student_id, secret):
-    if len(secret) < 32:
-        raise ValueError('ランキングの設定を確認してください。')
-    return hmac.new(secret.encode(), student_id.encode(), hashlib.sha256).hexdigest()
-
-
 @st.cache_resource
 def ranking_store(url, api_token, assignment_id):
-    return RankingStore(url, api_token, assignment_id=assignment_id)
-
-
-def public_ranking(rows):
-    """ブラウザへ渡す列を限定する。学籍番号や内部キーは含めない。"""
-    return pd.DataFrame([{'順位': int(row['position']), 'ROC-AUC': float(row['auc']),
-                          'あなた': '← あなた' if row['is_self'] else ''} for row in rows])
+    # 旧形式の「学生ごとの最高点」と匿名の提出を別のシートに保管する。
+    board_id = 'anon_' + hashlib.sha256(assignment_id.encode()).hexdigest()[:40]
+    return RankingStore(url, api_token, assignment_id=board_id)
 
 
 @st.fragment(run_every=30)
-def show_ranking(store, own_key, auc=None):
-    st.subheader('現在のランキング')
-    st.caption('1人につき最高スコアを掲載します。同点は同順位です。更新は約30秒ごとです。成績はLMSへの提出後に確定します。')
+def show_ranking(store, upload_key, auc=None):
+    st.subheader('この課題の上位20スコア')
+    st.caption('提出ごとのROC-AUCを高い順に表示します。同じ人の複数回の挑戦を含みます。約30秒ごとに更新します。成績はWebClassへの提出後に確定します。')
     st.button('ランキングを更新')
     try:
         scores = store.snapshot()
-        saved = own_key is not None and auc is not None and dict(scores).get(own_key, -1) >= auc
+        saved = upload_key is not None and auc is not None and dict(scores).get(upload_key, -1) >= auc
         ticket = st.session_state.get('_ranking_ticket')
-        if own_key and ticket is not None and not saved:
+        if upload_key and ticket is not None and not saved:
             if not ticket.done():
                 st.info('ランキングへ登録中です。反映まで少しお待ちください。')
             elif ticket.exception() is not None:
                 st.warning('ランキングへ保存できませんでした。採点結果はダウンロードできます。')
                 if st.button('ランキング登録を再試行'):
-                    st.session_state['_ranking_ticket'] = store.submit(own_key, auc)
+                    st.session_state['_ranking_ticket'] = store.submit(upload_key, auc)
                     st.rerun(scope='fragment')
-        rows = ranking_rows(scores, own_key)
-        if not rows:
+        values = top_scores(scores)
+        if not values:
             st.info('まだ登録されたスコアがありません。')
             return
-        own = next((row for row in rows if row['is_self']), None)
-        if own:
-            st.write(f"あなたは現在 **{own['position']}位 / {own['participants']}人** です。最高ROC-AUC：**{own['auc']:.6f}**")
-        elif not own_key:
-            st.caption('自分の順位はsubmission.csvをアップロードすると表示されます。')
-        st.dataframe(public_ranking(rows), hide_index=True,
+        st.dataframe(pd.DataFrame({'ROC-AUC': values}), hide_index=True,
                      column_config={'ROC-AUC': st.column_config.NumberColumn(format='%.6f')})
     except Exception:
         st.warning('ランキングを読み込めませんでした。少し待って更新してください。')
 
 
+st.caption('予測CSVには対象ID（participant_id）と予測値（probability）の2列を入れてください。氏名・学籍番号は不要です。')
 uploaded = st.file_uploader('submission.csvをアップロード', type=['csv'], max_upload_size=1, key=f'csv_{ASSIGNMENT_ID}')
 settings = ranking_settings()
-own_key = None
+upload_key = None
 auc = None
 store = None
 if settings:
@@ -180,7 +164,7 @@ if settings:
         st.warning('ランキングの準備ができていません。採点は利用できます。')
 if uploaded is not None:
     try:
-        student_id, probability = read_submission(uploaded.getvalue())
+        probability = read_submission(uploaded.getvalue())
     except ValueError as error:
         st.error(str(error))
         st.stop()
@@ -189,16 +173,15 @@ if uploaded is not None:
         st.stop()
     y = answer.target
     auc = roc_auc_score(y, probability)
-    st.write(f'学籍番号：{student_id}（ランキングには表示されません）')
     st.metric('ROC-AUC', f'{auc:.4f}')
     if settings:
         try:
-            key_id = student_id if ASSIGNMENT_ID == DEFAULT_ASSIGNMENT else f'{ASSIGNMENT_ID}:{student_id}'
-            own_key = student_key(key_id, settings['identity_secret'])
-            fingerprint = hashlib.sha256(ASSIGNMENT_ID.encode() + b'\0' + uploaded.getvalue()).hexdigest()
-            if store is not None and st.session_state.get('_ranking_file') != fingerprint:
-                st.session_state['_ranking_ticket'] = store.submit(own_key, float(auc))
-                st.session_state['_ranking_file'] = fingerprint
+            # Streamlit issues a fresh random file_id per upload and retains it on reruns.
+            upload_key = hashlib.sha256(uploaded.file_id.encode()).hexdigest()
+            attempt = (ASSIGNMENT_ID, upload_key)
+            if store is not None and st.session_state.get('_ranking_upload') != attempt:
+                st.session_state['_ranking_ticket'] = store.submit(upload_key, float(auc))
+                st.session_state['_ranking_upload'] = attempt
         except Exception:
             st.warning('採点は完了しましたが、ランキングへ保存できませんでした。少し待って再度アップロードしてください。')
     if auc >= PASS_AUC:
@@ -210,7 +193,6 @@ if uploaded is not None:
     result = pd.DataFrame([{
         '課題': ASSIGNMENT_TITLE,
         '課題ID': ASSIGNMENT_ID,
-        '学籍番号': student_id,
         '採点日時（日本時間）': datetime.now(timezone(timedelta(hours=9))).isoformat(timespec='seconds'),
         'ROC-AUC': auc,
         '合格ライン': PASS_AUC,
@@ -244,4 +226,4 @@ if uploaded is not None:
         plt.close(fig)
 
 if store is not None:
-    show_ranking(store, own_key, auc)
+    show_ranking(store, upload_key, auc)

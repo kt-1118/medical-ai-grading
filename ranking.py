@@ -96,15 +96,6 @@ class RankingStore:
                 return [row[:] for row in self.rows]
 
 
-def ranking_rows(scores, own_key=None):
-    best = {}
-    for key, auc in scores:
-        best[key] = max(best.get(key, 0), auc)
-    ordered = sorted(best.items(), key=lambda pair: (-pair[1], pair[0]))
-    rows, rank, previous = [], 0, None
-    for index, (key, auc) in enumerate(ordered, 1):
-        if auc != previous:
-            rank = index
-        rows.append({'position': rank, 'auc': auc, 'is_self': key == own_key, 'participants': len(ordered)})
-        previous = auc
-    return rows
+def top_scores(scores):
+    """異なる提出の同点を残し、公開するROC-AUCを最大20件に絞る。"""
+    return sorted((auc for _, auc in scores), reverse=True)[:20]
