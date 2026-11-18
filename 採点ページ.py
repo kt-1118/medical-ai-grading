@@ -15,13 +15,14 @@ from sklearn.metrics import (roc_auc_score, accuracy_score, recall_score,
 
 from ranking import RankingStore
 
-DEFAULT_ASSIGNMENT = 'nhanes_hba1c_2026'
+DEFAULT_ASSIGNMENT = 'nhanes_ml_v2_2026'
+COURSE_ALIASES = {'nhanes_hba1c_2026': DEFAULT_ASSIGNMENT, 'blood_dl_2026': 'blood_mlp_v2_2026'}
 COURSES = {
     'nhanes_logistic_2026': {'title': 'ロジスティック回帰演習', 'pass_auc': 0.77, 'challenge_auc': 0.79,
                             'label': '01 回帰・ロジスティック回帰'},
-    DEFAULT_ASSIGNMENT: {'title': 'NHANES 医療AI演習', 'pass_auc': 0.74, 'challenge_auc': 0.79,
+    DEFAULT_ASSIGNMENT: {'title': '機械学習演習（HbA1c高値群）', 'pass_auc': 0.73, 'challenge_auc': None,
                          'label': '02 機械学習（SVM・決定木・ランダムフォレスト）'},
-    'blood_dl_2026': {'title': '医療画像・深層学習演習', 'pass_auc': 0.90, 'challenge_auc': 0.95,
+    'blood_mlp_v2_2026': {'title': '深層学習演習（単球と未熟顆粒球）', 'pass_auc': 0.82, 'challenge_auc': None,
                          'label': '03 深層学習（血球画像）'},
 }
 st.set_page_config(page_title='演習・提出CSVの採点', layout='centered')
@@ -32,6 +33,7 @@ except FileNotFoundError:
 if not assignment:
     course_ids = list(COURSES)
     requested = st.query_params.get('course', DEFAULT_ASSIGNMENT)
+    requested = COURSE_ALIASES.get(requested, requested)
     selected = st.selectbox('演習を選択', course_ids,
         index=course_ids.index(requested) if requested in COURSES else course_ids.index(DEFAULT_ASSIGNMENT),
         format_func=lambda value: COURSES[value]['label'])
@@ -54,22 +56,22 @@ except (TypeError, ValueError):
     st.stop()
 ANSWER_FILE = Path(os.environ.get('NHANES_ANSWER_FILE', str(Path(__file__).with_name('public_test_answer.csv'))))
 
-PAGE_TITLE = '医療AI演習・提出CSVの採点' if ASSIGNMENT_ID == DEFAULT_ASSIGNMENT else f'{ASSIGNMENT_TITLE}・提出CSVの採点'
+PAGE_TITLE = f'{ASSIGNMENT_TITLE}・提出CSVの採点'
 st.title(PAGE_TITLE)
 st.write('submission.csvを選ぶと、自動で点数と合否が表示されます。結果をダウンロードしてLMSへ提出してください。')
 st.caption(f'合格：ROC-AUC {PASS_AUC:g}以上。提出の時間・期間・回数に制限はありません。')
 
 try:
-    if ASSIGNMENT_ID != DEFAULT_ASSIGNMENT:
-        local_answers = os.environ.get('NHANES_ANSWERS_DIR')
-        if local_answers:
-            answer = pd.read_csv(Path(local_answers) / f'{ASSIGNMENT_ID}.csv', dtype={'participant_id': str})
-        else:
-            answer = pd.read_csv(io.StringIO(st.secrets['answers'][ASSIGNMENT_ID]), dtype={'participant_id': str})
-    elif ANSWER_FILE.exists():
-        answer = pd.read_csv(ANSWER_FILE, dtype={'participant_id': str})
+    local_answers = os.environ.get('NHANES_ANSWERS_DIR')
+    if ASSIGNMENT_ID == 'nhanes_hba1c_2026':
+        source = ANSWER_FILE if ANSWER_FILE.exists() else io.StringIO(st.secrets['answer_csv'])
+    elif local_answers and (Path(local_answers) / f'{ASSIGNMENT_ID}.csv').is_file():
+        source = Path(local_answers) / f'{ASSIGNMENT_ID}.csv'
+    elif ASSIGNMENT_ID in st.secrets.get('answers', {}):
+        source = io.StringIO(st.secrets['answers'][ASSIGNMENT_ID])
     else:
-        answer = pd.read_csv(io.StringIO(st.secrets['answer_csv']), dtype={'participant_id': str})
+        raise ValueError('Unknown assignment')
+    answer = pd.read_csv(source, dtype={'participant_id': str})
     if list(answer.columns) != ['participant_id', 'target'] or answer.isna().any().any():
         raise ValueError()
     if not answer.participant_id.is_unique or set(answer.target.unique()) != {0, 1}:
@@ -88,7 +90,7 @@ def read_submission(content):
     except (UnicodeError, csv.Error):
         raise ValueError('UTF-8のCSVを選んでください。区切り文字や引用符も確認してください。') from None
     if rows and 'student_id' in rows[0]:
-        raise ValueError('旧形式のCSVです。最新版の配布ノートのSTEP9で学籍番号を含まないCSVを作成してください。')
+        raise ValueError('旧形式のCSVです。最新版の配布ノートで学籍番号を含まないCSVを作成してください。')
     if not rows or rows[0] != ['participant_id', 'probability']:
         raise ValueError('列はparticipant_id,probabilityの2列にしてください。')
     if any(len(row) != 2 for row in rows[1:]):
@@ -97,7 +99,7 @@ def read_submission(content):
     if len(submitted) != len(answer):
         raise ValueError(f'行数は{len(answer)}行にしてください。')
     if submitted.participant_id.duplicated().any():
-        raise ValueError('IDが重複しています。1人につき1行にしてください。')
+        raise ValueError('IDが重複しています。対象IDごとに1行にしてください。')
     if set(submitted.participant_id) != set(answer.participant_id):
         raise ValueError('IDがpublic testと一致しません。配布データのIDを使ってください。')
     submitted['probability'] = pd.to_numeric(submitted.probability, errors='coerce')
