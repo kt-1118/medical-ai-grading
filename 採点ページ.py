@@ -31,14 +31,31 @@ try:
 except FileNotFoundError:
     assignment = {}
 if not assignment:
-    course_ids = list(COURSES)
-    requested = st.query_params.get('course', DEFAULT_ASSIGNMENT)
-    requested = COURSE_ALIASES.get(requested, requested)
+    # Existing class links switch only after the private answer key has been installed.
+    try:
+        installed = set(st.secrets.get('answers', {}))
+    except FileNotFoundError:
+        installed = set()
+    answer_dir = os.environ.get('NHANES_ANSWERS_DIR')
+    if answer_dir:
+        installed.update(p.stem for p in Path(answer_dir).glob('*.csv'))
+    legacy_courses = {
+        'nhanes_hba1c_2026': dict(COURSES[DEFAULT_ASSIGNMENT], title='NHANES 医療AI演習', pass_auc=.74, challenge_auc=.79),
+        'blood_dl_2026': dict(COURSES['blood_mlp_v2_2026'], title='医療画像・深層学習演習', pass_auc=.90, challenge_auc=.95),
+    }
+    active = {old: new if new in installed else old for old, new in COURSE_ALIASES.items()}
+    course_ids = ['nhanes_logistic_2026', *active.values()]
+    requested = st.query_params.get('course', 'nhanes_hba1c_2026')
+    if requested in COURSE_ALIASES.values() and requested not in course_ids:
+        st.info('新版の採点を準備中です。少し待ってからこのリンクを開いてください。')
+        st.stop()
+    requested = active.get(requested, requested)
+    available = {**legacy_courses, **COURSES}
     selected = st.selectbox('演習を選択', course_ids,
-        index=course_ids.index(requested) if requested in COURSES else course_ids.index(DEFAULT_ASSIGNMENT),
-        format_func=lambda value: COURSES[value]['label'])
+        index=course_ids.index(requested) if requested in course_ids else 1,
+        format_func=lambda value: available[value]['label'])
     st.query_params['course'] = selected
-    assignment = dict(COURSES[selected], id=selected)
+    assignment = dict(available[selected], id=selected)
 try:
     ASSIGNMENT_ID = assignment.get('id', DEFAULT_ASSIGNMENT)
     ASSIGNMENT_TITLE = assignment.get('title', 'NHANES 医療AI演習')
