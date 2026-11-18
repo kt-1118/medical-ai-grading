@@ -29,7 +29,7 @@ class RankingStore:
         self.rows = []
         self.fetched_at = 0
 
-    def _request(self, action, entries=None):
+    def _post(self, action, entries=None):
         payload = {'token': self.api_token, 'action': action, 'entries': entries or [],
                    'assignment_id': self.assignment_id}
         request = Request(self.url, data=json.dumps(payload).encode(),
@@ -38,7 +38,13 @@ class RankingStore:
             result = json.loads(response.read())
         if not result.get('ok'):
             raise ValueError('ランキングとの通信に失敗しました。')
-        rows = result['scores']
+        return result
+
+    def course_answer(self):
+        return self._post('course_answer')['answer']
+
+    def _request(self, action, entries=None):
+        rows = self._post(action, entries)['scores']
         if not isinstance(rows, list) or any(
             not isinstance(row, list) or len(row) != 2 or
             not re.fullmatch(r'[0-9a-f]{64}', str(row[0])) or

@@ -31,31 +31,14 @@ try:
 except FileNotFoundError:
     assignment = {}
 if not assignment:
-    # Existing class links switch only after the private answer key has been installed.
-    try:
-        installed = set(st.secrets.get('answers', {}))
-    except FileNotFoundError:
-        installed = set()
-    answer_dir = os.environ.get('NHANES_ANSWERS_DIR')
-    if answer_dir:
-        installed.update(p.stem for p in Path(answer_dir).glob('*.csv'))
-    legacy_courses = {
-        'nhanes_hba1c_2026': dict(COURSES[DEFAULT_ASSIGNMENT], title='NHANES 医療AI演習', pass_auc=.74, challenge_auc=.79),
-        'blood_dl_2026': dict(COURSES['blood_mlp_v2_2026'], title='医療画像・深層学習演習', pass_auc=.90, challenge_auc=.95),
-    }
-    active = {old: new if new in installed else old for old, new in COURSE_ALIASES.items()}
-    course_ids = ['nhanes_logistic_2026', *active.values()]
-    requested = st.query_params.get('course', 'nhanes_hba1c_2026')
-    if requested in COURSE_ALIASES.values() and requested not in course_ids:
-        st.info('新版の採点を準備中です。少し待ってからこのリンクを開いてください。')
-        st.stop()
-    requested = active.get(requested, requested)
-    available = {**legacy_courses, **COURSES}
+    course_ids = list(COURSES)
+    requested = st.query_params.get('course', DEFAULT_ASSIGNMENT)
+    requested = COURSE_ALIASES.get(requested, requested)
     selected = st.selectbox('演習を選択', course_ids,
         index=course_ids.index(requested) if requested in course_ids else 1,
-        format_func=lambda value: available[value]['label'])
+        format_func=lambda value: COURSES[value]['label'])
     st.query_params['course'] = selected
-    assignment = dict(available[selected], id=selected)
+    assignment = dict(COURSES[selected], id=selected)
 try:
     ASSIGNMENT_ID = assignment.get('id', DEFAULT_ASSIGNMENT)
     ASSIGNMENT_TITLE = assignment.get('title', 'NHANES 医療AI演習')
@@ -78,6 +61,15 @@ st.title(PAGE_TITLE)
 st.write('submission.csvを選ぶと、自動で点数と合否が表示されます。結果をダウンロードしてLMSへ提出してください。')
 st.caption(f'合格：ROC-AUC {PASS_AUC:g}以上。提出の時間・期間・回数に制限はありません。')
 
+@st.cache_data(ttl=600, show_spinner=False)
+def read_private_course(course, url, _api_token):
+    rows = RankingStore(url, _api_token, assignment_id=course).course_answer()
+    frame = pd.DataFrame(rows, columns=['participant_id', 'target'])
+    if len(frame) != {'nhanes_ml_v2_2026': 550, 'blood_mlp_v2_2026': 863}[course]:
+        raise ValueError('Invalid course answer length')
+    return frame.to_csv(index=False)
+
+
 try:
     local_answers = os.environ.get('NHANES_ANSWERS_DIR')
     if ASSIGNMENT_ID == 'nhanes_hba1c_2026':
@@ -86,6 +78,9 @@ try:
         source = Path(local_answers) / f'{ASSIGNMENT_ID}.csv'
     elif ASSIGNMENT_ID in st.secrets.get('answers', {}):
         source = io.StringIO(st.secrets['answers'][ASSIGNMENT_ID])
+    elif ASSIGNMENT_ID in COURSE_ALIASES.values():
+        connection = st.secrets['leaderboard']
+        source = io.StringIO(read_private_course(ASSIGNMENT_ID, connection['url'], connection['api_token']))
     else:
         raise ValueError('Unknown assignment')
     answer = pd.read_csv(source, dtype={'participant_id': str})
