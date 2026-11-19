@@ -5,6 +5,7 @@ import os
 import io
 import hashlib
 import re
+import unicodedata
 from datetime import datetime, timezone, timedelta
 import numpy as np
 import pandas as pd
@@ -140,6 +141,41 @@ def ranking_store(url, api_token, assignment_id):
     return RankingStore(url, api_token, assignment_id=board_id)
 
 
+def format_lookup_code(upload_key):
+    # The stored key is a SHA-256 digest of Streamlit's random per-upload ID.
+    # Print 80 bits of it; the full storage key never leaves the server.
+    prefix = upload_key[:20].upper()
+    return '-'.join(prefix[i:i + 4] for i in range(0, len(prefix), 4))
+
+
+def show_attempt_rank(scores, score):
+    place = 1 + sum(other > score for _, other in scores)
+    st.info(f'この提出の現在順位：{place}位 / {len(scores)}件（ROC-AUC {score:.6f}）')
+
+
+def lookup_rank(scores, assignment_id):
+    st.subheader('照会番号で自分の順位を確認')
+    st.caption('この課題の採点結果.csv にある照会番号を入力してください。上位20件に入っていない提出も検索できます。同点は同順位です。')
+    with st.form(f'rank_search_{assignment_id}'):
+        entered = st.text_input('照会番号', max_chars=40, placeholder='4桁ずつ5組の英数字')
+        searched = st.form_submit_button('順位を検索')
+    if not entered.strip():
+        if searched:
+            st.info('採点結果.csv にある照会番号を入力してください。')
+        return
+    compact = re.sub(r'[-\s]', '', unicodedata.normalize('NFKC', entered)).lower()
+    if not re.fullmatch(r'[a-f0-9]{20}', compact):
+        st.warning('照会番号は0～9とA～Fの20文字です。ハイフン付きでも入力できます。')
+        return
+    matches = [value for key, value in scores if key.startswith(compact)]
+    if len(matches) == 1:
+        show_attempt_rank(scores, matches[0])
+    elif matches:
+        st.warning('同じ照会番号が複数あります。採点結果.csv を添えて教員にご連絡ください。')
+    else:
+        st.info('この課題には該当する提出がありません。課題と照会番号を確認してください。登録直後は少し待ってからお試しください。')
+
+
 @st.fragment(run_every=30)
 def show_ranking(store, upload_key, auc=None):
     st.subheader('この課題の上位20スコア')
@@ -147,22 +183,27 @@ def show_ranking(store, upload_key, auc=None):
     st.button('ランキングを更新')
     try:
         scores = store.snapshot()
-        saved = upload_key is not None and auc is not None and dict(scores).get(upload_key, -1) >= auc
-        ticket = st.session_state.get('_ranking_ticket')
-        if upload_key and ticket is not None and not saved:
-            if not ticket.done():
-                st.info('ランキングへ登録中です。反映まで少しお待ちください。')
-            elif ticket.exception() is not None:
+        by_key = dict(scores)
+        if upload_key and upload_key in by_key:
+            show_attempt_rank(scores, by_key[upload_key])
+        elif upload_key and auc is not None:
+            attempt = (ASSIGNMENT_ID, upload_key)
+            ticket = st.session_state.get('_ranking_ticket') if st.session_state.get('_ranking_upload') == attempt else None
+            if ticket is None or (ticket.done() and ticket.exception() is not None):
                 st.warning('ランキングへ保存できませんでした。採点結果はダウンロードできます。')
                 if st.button('ランキング登録を再試行'):
                     st.session_state['_ranking_ticket'] = store.submit(upload_key, auc)
+                    st.session_state['_ranking_upload'] = attempt
                     st.rerun(scope='fragment')
+            else:
+                st.info('ランキングへ登録中です。反映まで少しお待ちください。')
         values = sorted((value for _, value in scores), reverse=True)[:20]
         if not values:
             st.info('まだ登録されたスコアがありません。')
-            return
-        st.dataframe(pd.DataFrame({'ROC-AUC': values}), hide_index=True,
-                     column_config={'ROC-AUC': st.column_config.NumberColumn(format='%.6f')})
+        else:
+            st.dataframe(pd.DataFrame({'ROC-AUC': values}), hide_index=True,
+                         column_config={'ROC-AUC': st.column_config.NumberColumn(format='%.6f')})
+        lookup_rank(scores, ASSIGNMENT_ID)
     except Exception:
         st.warning('ランキングを読み込めませんでした。少し待って更新してください。')
 
@@ -215,6 +256,11 @@ if uploaded is not None:
         '判定': '合格' if auc >= PASS_AUC else '再挑戦',
         '対象人数': len(probability)
     }])
+    if store is not None and upload_key is not None:
+        lookup_code = format_lookup_code(upload_key)
+        result['照会番号'] = lookup_code
+        st.write('今回の提出の照会番号（採点結果.csv にも保存されます）')
+        st.code(lookup_code, language=None)
     st.download_button('採点結果をダウンロード',
         data=result.to_csv(index=False).encode('utf-8-sig'),
         file_name='採点結果.csv', mime='text/csv', on_click='ignore')
