@@ -139,7 +139,8 @@ def ranking_settings():
 def ranking_store(url, api_token, assignment_id):
     # 旧形式の「学生ごとの最高点」と匿名の提出を別のシートに保管する。
     board_id = 'anon_' + hashlib.sha256(assignment_id.encode()).hexdigest()[:40]
-    return RankingStore(url, api_token, assignment_id=board_id)
+    store = RankingStore(url, api_token, assignment_id=board_id)
+    return store
 
 
 def format_lookup_code(upload_key):
@@ -225,8 +226,8 @@ def show_admin(store):
             return
         try:
             store.admin_list(password)
-        except Exception:
-            st.error('管理キーを確認してください。通信できない場合は少し待って再度お試しください。')
+        except Exception as error:
+            st.error(f'管理キーを確認してください。通信できない場合は少し待って再度お試しください。（確認コード {type(error).__name__}）')
             return
         st.session_state['_admin_access'] = {'key': password, 'expires': time.monotonic() + 900}
         st.rerun()
