@@ -6,6 +6,7 @@ import io
 import hashlib
 import re
 import unicodedata
+import time
 from datetime import datetime, timezone, timedelta
 import numpy as np
 import pandas as pd
@@ -195,6 +196,8 @@ def show_ranking(store, upload_key, auc=None):
                     st.session_state['_ranking_ticket'] = store.submit(upload_key, auc)
                     st.session_state['_ranking_upload'] = attempt
                     st.rerun(scope='fragment')
+            elif ticket.done():
+                st.info('この提出は現在ランキングに掲載されていません。')
             else:
                 st.info('ランキングへ登録中です。反映まで少しお待ちください。')
         values = sorted((value for _, value in scores), reverse=True)[:20]
@@ -206,6 +209,68 @@ def show_ranking(store, upload_key, auc=None):
         lookup_rank(scores, ASSIGNMENT_ID)
     except Exception:
         st.warning('ランキングを読み込めませんでした。少し待って更新してください。')
+
+
+def show_admin(store):
+    st.subheader('教員用ランキング管理')
+    auth = st.session_state.get('_admin_access')
+    if auth and time.monotonic() >= auth['expires']:
+        st.session_state.pop('_admin_access', None)
+        auth = None
+    if not auth:
+        with st.form('admin_login', clear_on_submit=True):
+            password = st.text_input('管理キー', type='password', max_chars=100)
+            login = st.form_submit_button('管理者として開く')
+        if not login:
+            return
+        try:
+            store.admin_list(password)
+        except Exception:
+            st.error('管理キーを確認してください。通信できない場合は少し待って再度お試しください。')
+            return
+        st.session_state['_admin_access'] = {'key': password, 'expires': time.monotonic() + 900}
+        st.rerun()
+    if st.button('管理画面を閉じる'):
+        st.session_state.pop('_admin_access', None)
+        st.rerun()
+    if notice := st.session_state.pop('_admin_notice', None):
+        st.success(notice)
+    try:
+        rows = store.admin_list(auth['key'])
+    except Exception:
+        st.error('管理用のランキングを取得できませんでした。')
+        return
+    if not rows:
+        st.info('この課題のランキングには提出がありません。')
+        return
+    st.write('採点結果.csv の照会番号と照合し、削除する提出を1件選んでください。時刻は日本時間です。')
+    labels = {}
+    for key, score, timestamp in reversed(rows):
+        when = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).astimezone(timezone(timedelta(hours=9)))
+        labels[key] = f'{format_lookup_code(key)}　{when:%Y/%m/%d %H:%M:%S}　ROC-AUC {score:.6f}'
+    target = st.selectbox('削除する提出', list(labels), index=None, format_func=labels.get,
+                          placeholder='照会番号で検索できます', key=f'admin_target_{ASSIGNMENT_ID}')
+    if target not in labels:
+        return
+    st.write(f'削除対象：{ASSIGNMENT_TITLE} ／ {labels[target]}')
+    confirm = st.checkbox('この1件を授業ランキングから削除する', key=f'confirm_{ASSIGNMENT_ID}_{target}')
+    if st.button('選んだ1件を削除', disabled=not confirm) and confirm:
+        try:
+            deleted = store.admin_delete(auth['key'], target)
+        except Exception:
+            st.error('削除結果を確認できませんでした。管理画面を開き直して一覧を確認してください。')
+            return
+        st.session_state['_admin_notice'] = 'ランキングから1件削除しました。' if deleted else '該当する提出はすでにランキングにありません。'
+        st.rerun()
+
+
+if st.query_params.get('admin') == '1':
+    config = ranking_settings()
+    if config and ASSIGNMENT_ID in COURSES:
+        show_admin(ranking_store(config['url'], config['api_token'], ASSIGNMENT_ID))
+    else:
+        st.info('この課題のランキング管理は利用できません。')
+    st.stop()
 
 
 st.caption('予測CSVには対象ID（participant_id）と予測値（probability）の2列を入れてください。氏名・学籍番号は不要です。')

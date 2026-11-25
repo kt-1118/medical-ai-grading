@@ -29,9 +29,9 @@ class RankingStore:
         self.rows = []
         self.fetched_at = 0
 
-    def _post(self, action, entries=None):
+    def _post(self, action, entries=None, **fields):
         payload = {'token': self.api_token, 'action': action, 'entries': entries or [],
-                   'assignment_id': self.assignment_id}
+                   'assignment_id': self.assignment_id, **fields}
         request = Request(self.url, data=json.dumps(payload).encode(),
                           headers={'Content-Type': 'application/json'}, method='POST')
         with urlopen(request, timeout=30) as response:
@@ -42,6 +42,18 @@ class RankingStore:
 
     def course_answer(self):
         return self._post('course_answer')['answer']
+
+    def admin_list(self, admin_key):
+        result = self._post('admin_list', admin_key=admin_key)
+        return result['submissions']
+
+    def admin_delete(self, admin_key, key):
+        if not re.fullmatch(r'[0-9a-f]{64}', key):
+            raise ValueError('削除する提出の登録キーが不正です。')
+        with self.network_lock:
+            result = self._post('admin_delete', admin_key=admin_key, key=key)
+            self.fetched_at = 0
+            return result['deleted']
 
     def _request(self, action, entries=None):
         rows = self._post(action, entries)['scores']
@@ -65,7 +77,7 @@ class RankingStore:
         ticket = Future()
         with self.lock:
             self.pending[key] = max(self.pending.get(key, 0), auc)
-            self.waiters.append(ticket)
+            self.waiters.append((key, auc, ticket))
             if not self.running:
                 self.running = True
                 threading.Thread(target=self._flush, daemon=True).start()
@@ -81,13 +93,14 @@ class RankingStore:
                 with self.network_lock:
                     rows = self._request('submit', entries)
                     confirmed = dict(rows)
-                    if any(confirmed.get(key, -1) < auc for key, auc in entries):
-                        raise ValueError('スコアの保存を確認できませんでした。')
                     self._cache(rows)
-                for ticket in waiters:
-                    ticket.set_result(True)
+                for key, auc, ticket in waiters:
+                    if confirmed.get(key, -1) >= auc:
+                        ticket.set_result(True)
+                    else:
+                        ticket.set_exception(RuntimeError('スコアは登録されませんでした。'))
             except Exception:
-                for ticket in waiters:
+                for _, _, ticket in waiters:
                     ticket.set_exception(RuntimeError('ランキングへの保存に失敗しました。'))
             with self.lock:
                 if not self.pending:
