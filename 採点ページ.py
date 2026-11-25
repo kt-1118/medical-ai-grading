@@ -180,7 +180,7 @@ def lookup_rank(scores, assignment_id):
 @st.fragment(run_every=30)
 def show_ranking(store, upload_key, auc=None):
     st.subheader('この課題の上位20スコア')
-    st.caption('提出ごとのROC-AUCを高い順に表示します。同じ人の複数回の挑戦を含みます。約30秒ごとに更新します。成績はWebClassへの提出後に確定します。')
+    st.caption('提出ごとのROC-AUCを高い順に表示します。同じ人の複数回の挑戦を含みます。約30秒ごとに更新します。成績はLMSへの提出後に確定します。')
     st.button('ランキングを更新')
     try:
         scores = store.snapshot()
